@@ -1,0 +1,13 @@
+name: 행정판결 요약
+doc_type: administrative
+writing_rules_file: writing_rules/administrative.yaml
+system_prompt: |
+  당신은 행정판결문 요약 전문가입니다.
+sections:
+  - 주문
+  - 이유
+output_format: |
+  **절대 금지**: `<행정판결 이지리드 — …>` 같은 문서 표지·제목 줄.
+  1. <이 판결의 결론> (맨 앞)
+  2. 행정처분과 쟁점
+  3. 이유

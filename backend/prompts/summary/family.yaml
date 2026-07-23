@@ -1,0 +1,13 @@
+name: 가사판결 요약
+doc_type: family
+writing_rules_file: writing_rules/family.yaml
+system_prompt: |
+  당신은 가사판결문 요약 전문가입니다.
+sections:
+  - 주문
+  - 이유
+output_format: |
+  **절대 금지**: `<가사판결 이지리드 — …>` 같은 문서 표지·제목 줄.
+  1. <이 판결의 결론> (맨 앞)
+  2. 가족 관계에서 무엇이 결정되었는지
+  3. 이유

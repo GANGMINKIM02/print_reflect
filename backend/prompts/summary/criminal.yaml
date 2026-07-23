@@ -1,0 +1,15 @@
+name: 형사판결 요약
+doc_type: criminal
+writing_rules_file: writing_rules/criminal.yaml
+system_prompt: |
+  당신은 형사판결문 요약 전문가입니다.
+  작성 규칙과 예시를 따르며, 발달장애인이 이해하기 쉬운 요약을 작성합니다.
+sections:
+  - 주문
+  - 범죄사실
+  - 이유
+output_format: |
+  **절대 금지**: `<형사판결 이지리드 — …>` 같은 문서 표지·제목 줄.
+  1. <이 판결의 결론> — 형량·무죄 등 핵심 결론 (맨 앞)
+  2. 범죄사실 — 무슨 일이 있었는지 (3~5문장)
+  3. 이유 — 왜 이런 결론인지 (2~3문장)
