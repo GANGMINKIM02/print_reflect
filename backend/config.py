@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     backend_host: str = "0.0.0.0"
     backend_port: int = 8001
     convertapi_secret: str = ""
+    blob_read_write_token: str = ""
+    blob_base_url: str = "https://blob.vercel-storage.com"
 
     upstage_ocr_url: str = "https://api.upstage.ai/v1/document-digitization"
     upstage_chat_url: str = "https://api.upstage.ai/v1/solar/chat/completions"
@@ -43,6 +45,10 @@ class Settings(BaseSettings):
         if not self.upstage_api_key.strip():
             return True
         return self.mock_upstage
+
+    @property
+    def use_blob_storage(self) -> bool:
+        return IS_VERCEL and bool(self.blob_read_write_token.strip())
 
 
 settings = Settings()

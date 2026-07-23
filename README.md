@@ -68,6 +68,14 @@ API 문서: http://localhost:8001/docs
 3. **Environment Variables**:
    - `UPSTAGE_API_KEY` — Upstage API 키
    - `MOCK_UPSTAGE` — `false` (실제 AI 사용 시)
+   - `BLOB_READ_WRITE_TOKEN` — Vercel Blob Read/Write 토큰 (원본/요약/번역/PDF 영구 저장)
 4. Deploy
+
+### Vercel 파일 저장(권장)
+
+- Vercel Storage에서 Blob을 생성하고 `BLOB_READ_WRITE_TOKEN`을 설정하면,
+  업로드 원본/요약/번역/이지리드 산출물이 Blob에도 저장됩니다.
+- 인스턴스 재시작 후 로컬 `/tmp` 파일이 사라져도, 서버가 Blob에서 자동 복구하여
+  원본 열람·PDF 열기·합본 추출을 계속 수행합니다.
 
 로컬 개발 시에는 `pip install -r requirements-dev.txt` 로 uvicorn·PyMuPDF를 추가 설치하세요.

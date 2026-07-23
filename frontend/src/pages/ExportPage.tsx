@@ -65,7 +65,7 @@ export function ExportPage() {
   const buildExportPayload = useCallback(async () => {
     const cached = id ? getCachedUpload(id) : null;
     const mergedSegments = id ? resolveTranslationSegments(id, segments) : segments;
-    const exportSegments = await enrichSegmentsForExport(mergedSegments);
+    const exportSegments = await enrichSegmentsForExport(mergedSegments, { strict: true });
     return {
       segments: exportSegments,
       translation_text: exportSegments.map((s) => s.easy_text).filter(Boolean).join("\n\n"),

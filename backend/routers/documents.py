@@ -49,6 +49,7 @@ from backend.services.image_matcher import (
     fill_missing_item_placements_async,
     list_image_catalog,
 )
+from backend.services.image_assets import resolve_image_path, resolve_placement_image
 from backend.services.image_web_search import search_web_images
 from backend.services.easy_read_sanitize import extract_refined_translation
 from backend.services import parser, prompts, translator, upstage, word_export, pdf_export, user_storage, merged_export
@@ -292,12 +293,53 @@ def _require_user_id(x_user_id: str | None, user_id_query: str | None = None) ->
         raise HTTPException(401, "로그인 사용자가 필요합니다.")
     return user_id
 
+
+def _validate_export_images(doc: DocumentResponse) -> None:
+    """Fail fast when export placements reference missing images.
+
+    Without this check, export can silently degrade to text-only output.
+    """
+    missing: list[str] = []
+    for segment in doc.translation_segments or []:
+        for placement in segment.image_placements or []:
+            if placement.image_base64 and placement.image_base64.strip():
+                continue
+            resolved = resolve_placement_image(
+                image_file=placement.image_file,
+                image_url=placement.image_url,
+            )
+            if not resolved:
+                missing.append(placement.image_file)
+
+    if missing:
+        sample = ", ".join(sorted(set(missing))[:6])
+        raise HTTPException(
+            400,
+            f"그림 파일을 찾지 못했습니다: {sample}. 그림 페이지에서 다시 배치 후 추출해 주세요.",
+        )
+
 # --- 업로드·조회 ---
 
 
 @router.get("/catalog/images", response_model=list[ImageCatalogItem])
 async def image_catalog(q: str = Query("")) -> list[ImageCatalogItem]:
     return [ImageCatalogItem(**item) for item in list_image_catalog(q)]
+
+
+@router.get("/assets/images/{image_file}")
+async def read_image_asset(image_file: str) -> FileResponse:
+    # Block path traversal and normalize to file name only.
+    safe_name = Path(image_file).name
+    resolved = resolve_image_path(safe_name)
+    if not resolved:
+        raise HTTPException(404, "그림 파일을 찾을 수 없습니다.")
+    media_type, _ = mimetypes.guess_type(safe_name)
+    return FileResponse(
+        path=resolved,
+        media_type=media_type or "application/octet-stream",
+        filename=safe_name,
+        content_disposition_type="inline",
+    )
 
 
 @router.get("/catalog/images/web", response_model=list[ImageCatalogItem])
@@ -421,13 +463,29 @@ async def delete_user_project(
 
 
 @router.get("/{doc_id}/source")
-async def read_source_file(doc_id: str) -> FileResponse:
+async def read_source_file(
+    doc_id: str,
+    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
+    user_id: str | None = Query(default=None),
+) -> FileResponse:
     doc = await get_document(doc_id)
     if not doc:
         raise HTTPException(404, "문서를 찾을 수 없습니다.")
 
     path = _source_path(doc_id, doc.filename)
     if not path.is_file():
+        resolved_user = (x_user_id or user_id or "").strip()
+        if resolved_user:
+            stored = user_storage.get_source_file(resolved_user, doc_id)
+            if stored:
+                path, filename = stored
+                media_type, _ = mimetypes.guess_type(filename)
+                return FileResponse(
+                    path=path,
+                    media_type=media_type or "application/octet-stream",
+                    filename=filename,
+                    content_disposition_type="inline",
+                )
         raise HTTPException(404, "원본 파일을 찾을 수 없습니다.")
 
     media_type, _ = mimetypes.guess_type(doc.filename)
@@ -440,7 +498,11 @@ async def read_source_file(doc_id: str) -> FileResponse:
 
 
 @router.get("/{doc_id}/source.pdf")
-async def read_source_pdf(doc_id: str) -> Response:
+async def read_source_pdf(
+    doc_id: str,
+    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
+    user_id: str | None = Query(default=None),
+) -> Response:
     doc = await get_document(doc_id)
     if not doc:
         raise HTTPException(404, "문서를 찾을 수 없습니다.")
@@ -450,13 +512,24 @@ async def read_source_pdf(doc_id: str) -> Response:
         raise HTTPException(400, "Word 파일만 PDF로 미리볼 수 있습니다.")
 
     path = _source_path(doc_id, doc.filename)
-    if not path.is_file():
+    source_bytes: bytes | None = None
+    source_name = doc.filename
+    if path.is_file():
+        source_bytes = path.read_bytes()
+    else:
+        resolved_user = (x_user_id or user_id or "").strip()
+        if resolved_user:
+            stored = user_storage.get_source_file(resolved_user, doc_id)
+            if stored:
+                source_path, source_name = stored
+                source_bytes = source_path.read_bytes()
+    if source_bytes is None:
         raise HTTPException(404, "원본 파일을 찾을 수 없습니다.")
 
     from backend.services.docx_to_pdf import DocxToPdfError, convert_file_bytes_to_pdf
 
     try:
-        content = convert_file_bytes_to_pdf(path.read_bytes(), doc.filename)
+        content = convert_file_bytes_to_pdf(source_bytes, source_name)
     except DocxToPdfError as exc:
         raise HTTPException(
             503,
@@ -471,7 +544,11 @@ async def read_source_pdf(doc_id: str) -> Response:
 
 
 @router.head("/{doc_id}/source.pdf")
-async def head_source_pdf(doc_id: str) -> Response:
+async def head_source_pdf(
+    doc_id: str,
+    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
+    user_id: str | None = Query(default=None),
+) -> Response:
     doc = await get_document(doc_id)
     if not doc:
         raise HTTPException(404, "문서를 찾을 수 없습니다.")
@@ -482,7 +559,9 @@ async def head_source_pdf(doc_id: str) -> Response:
 
     path = _source_path(doc_id, doc.filename)
     if not path.is_file():
-        raise HTTPException(404, "원본 파일을 찾을 수 없습니다.")
+        resolved_user = (x_user_id or user_id or "").strip()
+        if not resolved_user or not user_storage.get_source_file(resolved_user, doc_id):
+            raise HTTPException(404, "원본 파일을 찾을 수 없습니다.")
 
     from backend.services.docx_to_pdf import conversion_backend_hint
 
@@ -496,14 +575,20 @@ async def head_source_pdf(doc_id: str) -> Response:
 
 
 @router.head("/{doc_id}/source")
-async def head_source_file(doc_id: str) -> Response:
+async def head_source_file(
+    doc_id: str,
+    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
+    user_id: str | None = Query(default=None),
+) -> Response:
     doc = await get_document(doc_id)
     if not doc:
         raise HTTPException(404, "문서를 찾을 수 없습니다.")
 
     path = _source_path(doc_id, doc.filename)
     if not path.is_file():
-        raise HTTPException(404, "원본 파일을 찾을 수 없습니다.")
+        resolved_user = (x_user_id or user_id or "").strip()
+        if not resolved_user or not user_storage.get_source_file(resolved_user, doc_id):
+            raise HTTPException(404, "원본 파일을 찾을 수 없습니다.")
 
     media_type, _ = mimetypes.guess_type(doc.filename)
     return Response(status_code=200, media_type=media_type or "application/octet-stream")
@@ -786,13 +871,13 @@ async def _export_docx(
         raise HTTPException(404, "문서를 찾을 수 없습니다.")
     if not doc.translation_text and not doc.summary and not doc.translation_segments:
         raise HTTPException(400, "내보낼 내용이 없습니다.")
+    _validate_export_images(doc)
 
     content = word_export.export_to_docx(doc)
     if x_user_id:
         easyread_text = doc.translation_text or doc.summary or ""
         if easyread_text:
             user_storage.save_easyread_text(x_user_id, doc_id, doc.filename, easyread_text)
-        user_storage.save_easyread_pdf(x_user_id, doc_id, doc.filename, content)
         user_storage.save_easyread_docx(x_user_id, doc_id, doc.filename, content)
     return Response(
         content=content,
@@ -835,6 +920,7 @@ async def _export_pdf(
         raise HTTPException(404, "문서를 찾을 수 없습니다.")
     if not doc.translation_text and not doc.summary and not doc.translation_segments:
         raise HTTPException(400, "내보낼 내용이 없습니다.")
+    _validate_export_images(doc)
 
     from backend.services.docx_to_pdf import DocxToPdfError
 
@@ -878,12 +964,19 @@ async def export_merged_pdf_post(
         raise HTTPException(404, "문서를 찾을 수 없습니다.")
     if not doc.translation_text and not doc.summary and not doc.translation_segments:
         raise HTTPException(400, "내보낼 내용이 없습니다.")
+    _validate_export_images(doc)
 
     source_path = _source_path(doc_id, doc.filename)
-    if not source_path.is_file():
-        raise HTTPException(404, "원본 파일을 찾을 수 없습니다.")
-
-    source_bytes = source_path.read_bytes()
+    if source_path.is_file():
+        source_bytes = source_path.read_bytes()
+    else:
+        if not x_user_id:
+            raise HTTPException(404, "원본 파일을 찾을 수 없습니다.")
+        stored = user_storage.get_source_file(x_user_id, doc_id)
+        if not stored:
+            raise HTTPException(404, "원본 파일을 찾을 수 없습니다.")
+        source_path, _stored_name = stored
+        source_bytes = source_path.read_bytes()
     easyread_docx = word_export.export_to_docx(doc)
     original_pages = await _resolve_parsed_pages_for_insert(doc_id, doc)
     merged_pdf = b""

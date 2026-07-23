@@ -12,6 +12,7 @@ import { WorkflowLayout, WorkflowTwoPaneColumn, WorkflowTwoPaneGrid } from "../c
 import { ensurePayload, getCachedUpload, summarizeFallbackBody } from "../utils/docCache";
 import { loadDocumentWithRecovery } from "../utils/documentLoader";
 import { getSourceFile as getStoredSourceFile, getSourceObjectUrl } from "../utils/sourceStore";
+import { getAuthUserId } from "../utils/auth";
 import { useDebouncedSave } from "../utils/useDebouncedSave";
 import { getWorkflowSnapshot, resolveSummary, saveWorkflowSnapshot } from "../utils/workflowCache";
 
@@ -136,6 +137,8 @@ export function SummaryPage() {
     if (!id) return;
     const cached = getCachedUpload(id);
     const previewName = filename || cached?.filename || "";
+    const authUserId = getAuthUserId();
+    const sourceQuery = authUserId ? `?user_id=${encodeURIComponent(authUserId)}` : "";
     setSourceFilename(previewName);
     setSourceReady(false);
     setSourcePreviewUrl(null);
@@ -172,7 +175,7 @@ export function SummaryPage() {
     (async () => {
       if (previewName && isWordSource(previewName, cached?.source_mime_type)) {
         try {
-          const res = await fetch(`/api/documents/${id}/source.pdf`);
+          const res = await fetch(`/api/documents/${id}/source.pdf${sourceQuery}`);
           if (res.ok) {
             const pdfBlob = await res.blob();
             useClientPreview(URL.createObjectURL(pdfBlob), true);
@@ -189,7 +192,7 @@ export function SummaryPage() {
         }
 
         try {
-          const sourceRes = await fetch(`/api/documents/${id}/source`);
+          const sourceRes = await fetch(`/api/documents/${id}/source${sourceQuery}`);
           if (sourceRes.ok) {
             useClientBlobPreview(await sourceRes.blob());
             return;
@@ -221,7 +224,7 @@ export function SummaryPage() {
         return;
       }
 
-      const serverUrl = `/api/documents/${id}/source`;
+      const serverUrl = `/api/documents/${id}/source${sourceQuery}`;
       try {
         const res = await fetch(serverUrl, { method: "HEAD" });
         if (res.ok) {
